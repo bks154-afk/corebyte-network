@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const DEFAULT_POOL_HOST: &str = "127.0.0.1";
+const DEFAULT_POOL_HOST: &str = "32.236.238.232";
 const DEFAULT_POOL_PORT: u16 = 3333;
 const DEFAULT_WALLET: &str = "0x34E01b6bC08cE82f88a516707B30289A40Af724c";
 
