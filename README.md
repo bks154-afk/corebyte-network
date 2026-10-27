@@ -11,3 +11,4 @@ Connect your hardware rig to the global CoreByte Stratum pool and earn **+50 CB*
 git clone [https://github.com/bks154-afk/corebyte-network.git](https://github.com/bks154-afk/corebyte-network.git)
 cd corebyte-network
 cargo run --release --bin miner -- 0xYOUR_CB_WALLET_ADDRESS
+Note: Replace 0xYOUR_CB_WALLET_ADDRESS with your actual payout address.
