@@ -28,6 +28,4 @@ Stratum Mining Pool	32.236.238.232:3333
 Libp2p DHT Bootstrap	/ip4/32.236.238.232/tcp/9000
 Live Metrics Dashboard	http://32.236.238.232:8080
 
-4. Upar right corner me green button **"Commit changes..."** par click karein aur popup aane par dobara **"Commit changes"** dabayein.
 
-Page turant update ho jayega aur table wa code boxes perfectly render ho jayenge.
