@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  corebyte-validator:
+    build: .
+    container_name: corebyte-validator-node
+    restart: unless-stopped
+    ports:
+      - "3333:3333"
+      - "8080:8080"
+    volumes:
+      - corebyte_data:/app/ledger_db
+    environment:
+      - RUST_LOG=info
+
+volumes:
+  corebyte_data:
