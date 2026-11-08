@@ -101,10 +101,43 @@ impl SignedTransaction {
         if self.sender == "0xCB_COINBASE_MINT" {
             return true;
         }
-        if self.signature == "DEV_TEST_PASS" {
-            return true;
+        if self.signature == "DEV_TEST_PASS" || self.signature.trim().is_empty() {
+            eprintln!("[SECURITY REJECT]: Blocked bypass/empty signature for {}", self.sender);
+            return false;
         }
-        !self.signature.is_empty()
+        let sig_clean = self.signature.trim_start_matches("0x");
+        if sig_clean.len() < 128 {
+            eprintln!("[SECURITY REJECT]: Invalid signature hex length for {}", self.sender);
+            return false;
+        }
+
+        // Full Secp256k1 ECDSA cryptographic check
+        if let (Ok(sig_bytes), Ok(pub_bytes)) = (hex::decode(sig_clean), hex::decode(self.public_key.trim_start_matches("0x"))) {
+            if sig_bytes.len() >= 64 {
+                if let (Ok(verifying_key), Ok(sig)) = (
+                    k256::ecdsa::VerifyingKey::from_sec1_bytes(&pub_bytes),
+                    k256::ecdsa::Signature::from_slice(&sig_bytes[..64])
+                ) {
+                    use sha3::{Digest, Keccak256};
+                    use k256::ecdsa::signature::Verifier;
+                    let msg = self.message_digest();
+                    let mut hasher = Keccak256::new();
+                    hasher.update(msg.as_bytes());
+                    let digest = hasher.finalize();
+
+                    if verifying_key.verify(&digest, &sig).is_ok() {
+                        let uncompressed = verifying_key.to_encoded_point(false);
+                        let mut addr_hasher = Keccak256::new();
+                        addr_hasher.update(&uncompressed.as_bytes()[1..]);
+                        let addr_hash = addr_hasher.finalize();
+                        let derived_addr = format!("0x{}", hex::encode(&addr_hash[12..]));
+                        return derived_addr.to_lowercase() == self.sender.to_lowercase();
+                    }
+                }
+            }
+        }
+        eprintln!("[SECURITY REJECT]: ECDSA verification failed for {}", self.sender);
+        false
     }
 
     pub fn is_valid(&self) -> bool {

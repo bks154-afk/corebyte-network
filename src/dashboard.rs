@@ -493,7 +493,7 @@ pub async fn dashboard_handler() -> impl Responder {
                         batch_merkle_root: root,
                         transaction_count: count,
                         compressed_state_delta: "CB_STATE_COMPRESSED_DELTA",
-                        signature: "DEV_TEST_PASS"
+                        signature: "UNAUTHORIZED_NO_KEY"
                     })
                 });
                 const d = await res.json();
@@ -523,7 +523,7 @@ pub async fn dashboard_handler() -> impl Responder {
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         sender: s, receiver: r, amount: amt, priority_fee: 0.01,
-                        nonce: nonce, public_key: "DEV_KEY", signature: "DEV_TEST_PASS",
+                        nonce: nonce, public_key: "DEV_KEY", signature: "UNAUTHORIZED_NO_KEY",
                         chain_id: 8080, timestamp: Math.floor(Date.now() / 1000), data: "0xTRANSFER"
                     })
                 });

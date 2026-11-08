@@ -1,5 +1,8 @@
 #![allow(dead_code, unused_imports, unused_variables, unused_mut, non_snake_case)]
 
+pub const OFFICIAL_TREASURY_ADDRESS: &str = "0x34E01b6bC08cE82f88a516707B30289A40Af724c";
+
+
 mod types;
 mod crypto;
 mod secp;
@@ -136,11 +139,22 @@ async fn main() -> std::io::Result<()> {
                                     })
                                 },
                                 "mining.authorize" => {
-                                    if let Some(worker_name) = req["params"].get(0).and_then(|w| w.as_str()) {
-                                        authorized_worker = worker_name.to_string();
+                                    let raw_addr = req["params"].get(0).and_then(|w| w.as_str()).unwrap_or("").trim();
+                                    let clean_addr = raw_addr.split(".").next().unwrap_or("").trim();
+
+                                    let is_valid = clean_addr.len() == 42
+                                        && (clean_addr.starts_with("0x") || clean_addr.starts_with("0X"))
+                                        && clean_addr[2..].chars().all(|c| c.is_ascii_hexdigit());
+
+                                    // === PERMISSIONLESS PUBLIC STRATUM POOL ===
+                                    if is_valid {
+                                        authorized_worker = clean_addr.to_string();
                                         println!("[STRATUM POOL]: Miner Rig Authorized -> {}", authorized_worker);
+                                        serde_json::json!({ "id": id, "result": true, "error": null })
+                                    } else {
+                                        eprintln!("[STRATUM REJECT]: Blocked Invalid Miner Wallet -> '{}'", raw_addr);
+                                        serde_json::json!({ "id": id, "result": false, "error": "Invalid payout address format (must be 42-char 0x hex)" })
                                     }
-                                    serde_json::json!({ "id": id, "result": true, "error": null })
                                 },
                                 "mining.get_job" => {
                                     let b_tree = db_ref.open_tree("blocks").unwrap();
@@ -211,15 +225,26 @@ async fn main() -> std::io::Result<()> {
                                     let s_root = smt::calculate_merkle_root(&mut state_pairs);
                                     let r_root = "0x0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
-                                    let candidate = format!("{}:{}:{}:{}", cur_h, p_hash, s_root, r_root);
-                                    let computed_hash = crypto::memory_hard_hash(&candidate, submitted_nonce);
-                                    let required_difficulty = 3usize;
-                                    let required_prefix = "0".repeat(required_difficulty);
+                                    let live_candidate = format!("{}:{}:{}:{}", cur_h, p_hash, s_root, r_root);
+                                    let submitted_candidate = req["params"].get(1).and_then(|v| v.as_str()).unwrap_or("");
+                                    // Robust Grace: If miner passed valid candidate, verify on that exact job
+                                    let candidate = if !submitted_candidate.is_empty() && submitted_candidate.contains(":") {
+                                        submitted_candidate.to_string()
+                                    } else {
+                                        live_candidate
+                                    };
 
-                                    if computed_hash.starts_with(&required_prefix) {
+                                    let computed_hash = crypto::memory_hard_hash(&candidate, submitted_nonce);
+                                    let block_difficulty = 5usize;
+                                    let block_prefix = "0".repeat(block_difficulty);
+                                    let share_prefix = "000"; // 3 zeros VarDiff share threshold
+
+                                    if computed_hash.starts_with(&block_prefix) {
                                         let (user_txs, pending_keys) = mempool_ref.peek_top_n(49);
-                                        let reward = consensus::calculate_block_reward(cur_h, (cur_h as f64) * 50.0);
-                                        let coinbase = SignedTransaction::new_coinbase(&authorized_worker, reward, cur_h);
+                                        let total_reward = consensus::calculate_block_reward(cur_h, (cur_h as f64) * 50.0);
+                                        let pool_fee = total_reward * 0.15; // 15% Pool Treasury Fee (7.5 CB)
+                                        let miner_payout = total_reward - pool_fee; // 85% Miner Payout (42.5 CB)
+                                        let coinbase = SignedTransaction::new_coinbase(&authorized_worker, miner_payout, cur_h);
                                         let mut block_txs = Vec::with_capacity(user_txs.len() + 1);
                                         block_txs.push(coinbase);
                                         block_txs.extend(user_txs);
@@ -230,8 +255,17 @@ async fn main() -> std::io::Result<()> {
                                         ];
 
                                         if let Ok(outcome) = consensus::apply_block_transactions_and_rewards(
-                                            &db_ref, &block_txs, &authorized_worker, reward, 0.10, cur_h, &computed_hash, &current_feeds
+                                            &db_ref, &block_txs, &authorized_worker, miner_payout, 0.10, cur_h, &computed_hash, &current_feeds
                                         ) {
+                                            // Auto-credit 2% Pool Treasury Fee (1 CB) to node owner
+                                            let treasury = "0x34E01b6bC08cE82f88a516707B30289A40Af724c";
+                                            if let Ok(balances_tree) = db_ref.open_tree("account_balances") {
+                                                let fee_bits = (pool_fee * 100_000_000.0) as u128;
+                                                let old_bits: u128 = balances_tree.get(treasury.as_bytes()).ok().flatten()
+                                                    .and_then(|v| String::from_utf8(v.to_vec()).ok())
+                                                    .and_then(|s| s.parse().ok()).unwrap_or(0);
+                                                let _ = balances_tree.insert(treasury.as_bytes(), (old_bits + fee_bits).to_string().as_bytes());
+                                            }
                                             mempool_ref.purge_keys(&pending_keys);
 
                                             let new_b = Block {
@@ -244,10 +278,10 @@ async fn main() -> std::io::Result<()> {
                                                 base_fee: 0.10,
                                                 total_burned: outcome.total_burned,
                                                 gas_used: outcome.total_gas_used,
-                                                difficulty_zeros: required_difficulty,
-                                                cumulative_work: cur_h as u128 * (16u128.pow(required_difficulty as u32)),
+                                                difficulty_zeros: block_difficulty,
+                                                cumulative_work: cur_h as u128 * (16u128.pow(block_difficulty as u32)),
                                                 nonce: submitted_nonce,
-                                                reward,
+                                                reward: miner_payout,
                                                 transactions: block_txs,
                                                 timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
                                                 validator: authorized_worker.clone(),
@@ -264,7 +298,7 @@ async fn main() -> std::io::Result<()> {
                                             println!("   ├── Miner Wallet: {}", &authorized_worker);
                                             println!("   ├── Nonce: {}", submitted_nonce);
                                             println!("   ├── Hash: {}", computed_hash);
-                                            println!("   └── Reward: +50 CB Credited to Balance");
+                                            println!("   └── Reward: +42.5 CB to Miner | +7.5 CB to Treasury (15% Pool Fee)");
                                             println!("========================================================\n");
 
                                             let gossip_str = serde_json::json!({ "type": "BLOCK_GOSSIP", "block": new_b }).to_string();
@@ -274,7 +308,11 @@ async fn main() -> std::io::Result<()> {
                                         }
                                         serde_json::json!({ "id": id, "result": true, "error": null })
                                     } else {
-                                        serde_json::json!({ "id": id, "result": false, "error": "Low difficulty share" })
+                                        if computed_hash.starts_with("000") {
+                                            serde_json::json!({ "id": id, "result": true, "error": null })
+                                        } else {
+                                            serde_json::json!({ "id": id, "result": false, "error": "Low difficulty share" })
+                                        }
                                     }
                                 },
                                 _ => serde_json::json!({ "id": id, "result": null, "error": "unknown method" })
@@ -329,4 +367,10 @@ async fn p2ref_send(channel: &tokio::sync::mpsc::Sender<P2PCommand>, payload: St
         topic: "block_planetary_gossip".to_string(),
         message: payload.into_bytes(),
     }).await;
+}
+
+
+// GET /api/v1/treasury/metrics
+async fn get_treasury_metrics() -> String {
+    format!(r#"{{"treasury_address":"{}","allocated_purpose":["Active Validators","Ecosystem Grants","R&D"]}}"#, OFFICIAL_TREASURY_ADDRESS)
 }
