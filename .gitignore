@@ -2,3 +2,7 @@ target/
 *.db/
 *.log
 .env
+ledger_db/
+*.db/
+*.bak*
+0
